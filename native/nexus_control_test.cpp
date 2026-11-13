@@ -281,6 +281,25 @@ int main() {
         "GET /v1/nexus/status HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer " + token +
         "\r\nAuthorization: Bearer " + token + "\r\nContent-Length: 0\r\n\r\n");
     assert(duplicate_auth.find("401 Unauthorized") != std::string::npos);
+    // Logs: only the two named files, whole lines, a byte cursor, valid JSON.
+    assert(query(port, "GET", "/v1/nexus/logs/app", token).find("404 Not Found") != std::string::npos);
+    const std::string log_name = std::string(directory) + "/app.log";
+    { std::ofstream log(log_name, std::ios::binary); log << "first \"line\"\r\nbad \xff" " byte\npartial"; }
+    api.set_log_files(log_name, std::string(directory) + "/missing.log");
+    assert(query(port, "GET", "/v1/nexus/logs/app", "").find("401 Unauthorized") != std::string::npos);
+    assert(query(port, "GET", "/v1/nexus/logs/app", token)
+        .find("\"next\":25,\"lines\":[\"first \\\"line\\\"\",\"bad ? byte\"]}") != std::string::npos);
+    { std::ofstream log(log_name, std::ios::binary | std::ios::app); log << " done\n"; }
+    assert(query(port, "GET", "/v1/nexus/logs/app?after=25", token)
+        .find("\"next\":38,\"lines\":[\"partial done\"]}") != std::string::npos);
+    assert(query(port, "GET", "/v1/nexus/logs/app?after=38", token).find("\"next\":38,\"lines\":[]}") != std::string::npos);
+    assert(query(port, "GET", "/v1/nexus/logs/app?after=999999", token).find("\"lines\":[\"first") != std::string::npos);
+    assert(query(port, "GET", "/v1/nexus/logs/llama", token).find("\"next\":0,\"lines\":[]}") != std::string::npos);
+    assert(query(port, "GET", "/v1/nexus/logs/app?after=-1", token).find("400 Bad Request") != std::string::npos);
+    assert(query(port, "GET", "/v1/nexus/logs/app?path=/etc/passwd", token).find("400 Bad Request") != std::string::npos);
+    assert(query(port, "GET", "/v1/nexus/logs/../token", token).find("404 Not Found") != std::string::npos);
+    assert(query(port, "POST", "/v1/nexus/logs/app", token).find("404 Not Found") != std::string::npos);
+    unlink(log_name.c_str());
     const auto body_request = request(port,
         "POST /v1/nexus/models/unload HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer " + token +
         "\r\nContent-Length: 1\r\n\r\nx");

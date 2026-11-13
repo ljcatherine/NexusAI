@@ -1,0 +1,12 @@
+diff --git a/ps5/app/main.cpp b/ps5/app/main.cpp
+index 4275f07..5378dfc 100644
+--- a/ps5/app/main.cpp
++++ b/ps5/app/main.cpp
+@@ -936,6 +936,7 @@ int main(int, char **) {
+     // been provisioned in a private owned file. A second opt-in marker is
+     // needed to listen on the LAN instead of loopback.
+     NexusControl nexus;
++    nexus.set_log_files(kLog, kLlamaLog);  // the only files the logs endpoint reads
+     const bool nexus_lan = access((kDir + "/nexus-control.lan").c_str(), F_OK) == 0;
+     if (nexus.start(kDir + "/nexus-control.token", nexus_lan)) {
+         std::printf("ps5lm-app: Nexus control listening on %s:8082\n",

@@ -1,0 +1,123 @@
+diff --git a/ps5/app/dashboard.cpp b/ps5/app/dashboard.cpp
+index 7898580..a68bd0f 100644
+--- a/ps5/app/dashboard.cpp
++++ b/ps5/app/dashboard.cpp
+@@ -50,6 +50,7 @@ constexpr float kGap = 20.0f, kRadius = 28.0f, kPad = 28.0f;
+ constexpr float kLabelY = 46.0f, kLabelSize = 17.0f, kLift = 0.02f;
+ constexpr float kTau = 6.2831853f;
+ constexpr const char * kDash = "\xE2\x80\x94";
++constexpr float kIntro = 2.4f;  // the launch animation, in seconds
+ 
+ enum Tile : int { kSpeed, kUsage, kPower, kMemory, kContext, kStorage, kThermals, kModel };
+ 
+@@ -238,6 +239,11 @@ Rect Dashboard::ring_rect() const {
+ void Dashboard::update(const hui::InputFrame & raw, float dt, ui::Feedback & feedback) {
+     const hui::InputFrame none{};
+     const hui::InputFrame & input = busy() ? none : raw;  // busy: the screen says so, buttons wait
++    if (intro_ < kIntro) {  // the launch animation first: the entrance below waits for it
++        intro_ = raw.is_pressed(Action::confirm) ? kIntro : intro_ + dt;
++        clock_ += dt;
++        return;
++    }
+     age_ += dt;
+     clock_ += dt;
+     page_age_ += dt;
+@@ -2014,12 +2020,85 @@ void Dashboard::draw_hints(DashboardFrame & frame) const {
+     }
+ }
+ 
++// The launch animation: the Orbit N draws itself, the name follows, then the
++// dashboard's own entrance takes over. The geometry is assets/nexus-icon.svg's.
++void Dashboard::draw_intro(gfx::DrawList & list) const {
++    const float t = intro_;
++    constexpr float kScale = 360.0f / 1024.0f, kLeft = 780.0f, kTop = 290.0f;
++    const auto px = [&](float x) { return kLeft + x * kScale; };
++    const auto py = [&](float y) { return kTop + y * kScale; };
++    // A point on the orbit: an ellipse tilted 24 degrees about the icon's centre.
++    const auto orbit = [&](float angle, float * x, float * y) {
++        const float ex = 372.0f * std::cos(angle), ey = 136.0f * std::sin(angle);
++        *x = px(512.0f + ex * 0.9135f + ey * 0.4067f);
++        *y = py(512.0f - ex * 0.4067f + ey * 0.9135f);
++    };
++    const auto arc = [&](float a0, float a1, float amount, float width, Color from, Color to) {
++        constexpr int kSteps = 48;
++        float lx, ly;
++        orbit(a0, &lx, &ly);
++        for (int i = 1; i <= kSteps && (float) (i - 1) / kSteps < amount; ++i) {
++            const float f = std::min((float) i / kSteps, amount);
++            float x, y;
++            orbit(a0 + (a1 - a0) * f, &x, &y);
++            list.line(lx, ly, x, y, width, gfx::mix(from, to, f));
++            lx = x;
++            ly = y;
++        }
++    };
++    const float letter = tween::cubic_out(tween::clamp01(t / 0.7f));
++    const float pop    = tween::cubic_out(tween::clamp01((t - 0.35f) / 0.3f));
++    const float front  = tween::cubic_out(tween::clamp01((t - 0.45f) / 0.7f));
++    const float back   = tween::cubic_out(tween::clamp01((t - 1.0f) / 0.6f));
++    const float name   = tween::cubic_out(tween::clamp01((t - 1.3f) / 0.5f));
++    list.push_opacity(1.0f - tween::clamp01((t - (kIntro - 0.35f)) / 0.35f));
++
++    // The far half of the orbit, behind the letter: solid, so its joints do not show.
++    const Color dim = gfx::mix(Color::rgb(0x0b1430), kCyan, 0.35f);
++    arc(0.0f, -0.5f * kTau, back, 24.0f * kScale, dim, dim);
++
++    const float nx[4] = { 334, 334, 690, 690 }, ny[4] = { 718, 306, 718, 306 };
++    const float stroke = 92.0f * kScale;
++    float       left = letter * 1368.5f;  // the three strokes' length
++    for (int i = 0; i < 3 && left > 0; ++i) {
++        const float len = std::hypot(nx[i + 1] - nx[i], ny[i + 1] - ny[i]);
++        const float f = std::min(1.0f, left / len);
++        const float ex = nx[i] + (nx[i + 1] - nx[i]) * f, ey = ny[i] + (ny[i + 1] - ny[i]) * f;
++        list.circle(px(nx[i]), py(ny[i]), stroke * 0.5f, kInk);
++        list.line(px(nx[i]), py(ny[i]), px(ex), py(ey), stroke, kInk);
++        list.circle(px(ex), py(ey), stroke * 0.5f, kInk);
++        left -= len;
++    }
++
++    // The near half, and the two nodes: one waits, one rides the stroke round.
++    arc(0.5f * kTau, 0.0f, front, 26.0f * kScale, kCyan, kBrand);
++    if (pop > 0) {
++        float x, y;
++        orbit(0.5f * kTau, &x, &y);
++        list.circle(x, y, 44.0f * kScale * pop, kCyan);
++        orbit(0.5f * kTau * (1.0f - front), &x, &y);
++        list.circle(x, y, 44.0f * kScale * pop, gfx::mix(kCyan, kBrand, front));
++    }
++
++    list.push_opacity(name);
++    const float w = fonts_.display.measure("Nexus", 56) + fonts_.display.measure("AI", 56);
++    const float tx = 960.0f - w * 0.5f, ty = 760.0f + 12.0f * (1.0f - name);
++    const float n = ui::text(list, fonts_.display, "Nexus", tx, ty, 56, kInk);
++    ui::text(list, fonts_.display, "AI", tx + n, ty, 56, kBrand);
++    list.pop_opacity();
++    list.pop_opacity();
++}
++
+ void Dashboard::draw(DashboardFrame & frame) const {
+     frame.backdrop.mode = gfx::BackdropMode::dots;
+     frame.backdrop.colors[0] = Color::rgb(0x070c18);
+     frame.backdrop.colors[1] = Color::rgb(0x0b1430);
+     frame.backdrop.colors[2] = gfx::mix(Color::rgb(0x27457f), Color::rgb(0x34276e), 0.35f);
+     frame.backdrop.time = clock_;
++    if (intro_ < kIntro) {
++        draw_intro(frame.scene);
++        return;
++    }
+ 
+     gfx::DrawList & scene = frame.scene;
+     // A page arrives from the side it was asked for and fades in.
+diff --git a/ps5/app/dashboard.hpp b/ps5/app/dashboard.hpp
+index 13de51c..a8d8114 100644
+--- a/ps5/app/dashboard.hpp
++++ b/ps5/app/dashboard.hpp
+@@ -127,6 +127,8 @@ class Dashboard {
+ 
+     float age_   = 0;  // seconds since start: the entrance
+     float clock_ = 0;  // idle motion
++    float intro_ = 0;  // seconds of the launch animation shown
++    void draw_intro(hui::gfx::DrawList & list) const;
+     std::string busy_title_, busy_text_;
+     void draw_busy(hui::gfx::DrawList & list) const;
+     bool  storage_open_ = false;

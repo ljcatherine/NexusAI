@@ -64,6 +64,8 @@ non-production homebrew setup first, keep a copy of the original title, and foll
 | `GET /v1/nexus/models` | Installed models: stable ID, label, drive, `fits` and `current` flags, plus `file_size_bytes`, `architecture` and `quantization_type` where known |
 | `POST /v1/nexus/models/{16-hex-id}/load` | `202`. Queues a GPU-safe restart into that model |
 | `POST /v1/nexus/models/unload` | `202`. Queues a restart with no model |
+| `GET /v1/nexus/logs/app`, `GET /v1/nexus/logs/llama` | The newest lines of the app or llama.cpp log (up to 64 KiB) as `{"source","next","lines"}` |
+| `GET /v1/nexus/logs/{app\|llama}?after=<next>` | Only the lines written since that cursor. Poll it to follow a log |
 
 Every request needs `Authorization: Bearer <token>`. Model IDs resolve only to models the app has
 already found and approved; unknown IDs, incompatible models, concurrent switches and other methods are
@@ -72,6 +74,10 @@ arguments.
 
 Switching models **restarts the app** to free Vulkan memory, so inference and streaming pause. Poll
 `/v1/nexus/status` until the new model reports ready.
+
+Logs are followed by polling, not a held-open stream: pass each reply's `next` back as `after`. Both
+logs start again when the app restarts, so after a model switch ask without `after` once. Logs name
+model files and LAN addresses; they are served only to the bearer token, like everything else here.
 
 <details>
 <summary><b>Model metadata details</b></summary>
@@ -108,7 +114,7 @@ sent over an untrusted network. See [SECURITY.md](SECURITY.md) to report a vulne
 
 | Test | What it covers |
 |---|---|
-| [`native/nexus_control_test.cpp`](native/nexus_control_test.cpp) | Fail-closed token setup, private-file permissions, hash validation, authentication, JSON escaping, inventory, status, invalid selection, exclusive switching |
+| [`native/nexus_control_test.cpp`](native/nexus_control_test.cpp) | Fail-closed token setup, private-file permissions, hash validation, authentication, JSON escaping, inventory, status, invalid selection, exclusive switching, log paging |
 | [`tests/`](tests) | The PS5 JSON numeric-locale fix and control-file owner repair |
 | [`scripts/`](scripts) | Benchmark, security preflight and service provenance checks, each with tests |
 | [`test_verify_title.py`](test_verify_title.py) | Offline title integrity check before a first PS5 test |

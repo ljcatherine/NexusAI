@@ -24,6 +24,8 @@ class NexusControl {
     // the default; the LAN opt-in marker enables access from a private gateway.
     bool start(const std::string & token_file, bool allow_lan, unsigned short port = 8082);
     void stop();
+    // Call before start(). The logs endpoint reads these two files and no others.
+    void set_log_files(std::string app, std::string llama);
     unsigned short port() const;
     void publish(const Live & live, const std::vector<ModelRow> & models);
     std::optional<std::string> take_request(); // "none" to unload, model path to load
@@ -37,6 +39,7 @@ class NexusControl {
     std::array<unsigned char, 32> token_hash_{};
     Live live_;
     std::vector<ModelRow> models_;
+    std::string app_log_, llama_log_;
     std::optional<std::string> pending_;
     bool switching_ = false;
     bool restart_failed_ = false;

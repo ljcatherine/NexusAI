@@ -1,0 +1,75 @@
+diff --git a/ps5/app/dashboard.cpp b/ps5/app/dashboard.cpp
+index 10368b1..7898580 100644
+--- a/ps5/app/dashboard.cpp
++++ b/ps5/app/dashboard.cpp
+@@ -28,18 +28,18 @@ namespace tween = hui::tween;
+ 
+ namespace {
+ 
+-// ---- the design language (Pulse Dashboard's) --------------------------------
++// ---- the design language (Nexus Midnight) -----------------------------------
+ 
+-const Color kInk         = Color::rgb(0xe9eefc);
++const Color kInk         = Color::rgb(0xe9edf7);
+ const Color kClear       = Color::rgb(0x000000, 0.0f);
+ const Color kBlack       = Color::rgb(0x000000);
+-const Color kPanelTop    = Color::rgb(0x171f33);
+-const Color kPanelBottom = Color::rgb(0x0e1424);
+-const Color kCyan        = Color::rgb(0x4fe0ff);  // speed and the GPU
+-const Color kLime        = Color::rgb(0xb8f26b);  // the CPU and the model
+-const Color kAmber       = Color::rgb(0xffc24a);  // memory
+-const Color kRose        = Color::rgb(0xff6f9c);  // GPU memory
+-const Color kBrand       = Color::rgb(0x8288f0);  // PS5LM's periwinkle, and the context
++const Color kPanelTop    = Color::rgb(0x202b42);
++const Color kPanelBottom = Color::rgb(0x172137);
++const Color kCyan        = Color::rgb(0x9cbcff);  // speed and the GPU
++const Color kLime        = Color::rgb(0x7ce8ca);  // the CPU and the model
++const Color kAmber       = Color::rgb(0xf1c07e);  // memory
++const Color kRose        = Color::rgb(0xff93a2);  // GPU memory
++const Color kBrand       = Color::rgb(0xc9adff);  // Nexus purple, and the context
+ const Color kHeat        = Color::rgb(0xff8a5c);  // temperatures
+ 
+ constexpr float kMuted = 0.62f;
+@@ -61,14 +61,14 @@ struct TileSpec {
+ 
+ // In reading order: ties in the navigation go to the earlier tile.
+ constexpr TileSpec kSpec[Dashboard::kTiles] = {
+-    { "GENERATION", 0, 0, 6, 2, 0x4fe0ff },
+-    { "USAGE", 6, 0, 3, 2, 0x4fe0ff },
++    { "GENERATION", 0, 0, 6, 2, 0x9cbcff },
++    { "USAGE", 6, 0, 3, 2, 0x9cbcff },
+     { "POWER", 9, 0, 3, 2, 0xffd166 },
+-    { "MEMORY", 0, 2, 6, 1, 0xffc24a },
+-    { "CONTEXT", 0, 3, 3, 1, 0x8288f0 },
+-    { "STORAGE", 3, 3, 3, 1, 0xff6f9c },
++    { "MEMORY", 0, 2, 6, 1, 0xf1c07e },
++    { "CONTEXT", 0, 3, 3, 1, 0xc9adff },
++    { "STORAGE", 3, 3, 3, 1, 0xff93a2 },
+     { "THERMALS", 6, 2, 3, 2, 0xff8a5c },
+-    { "MODEL", 9, 2, 3, 2, 0xb8f26b },
++    { "MODEL", 9, 2, 3, 2, 0x7ce8ca },
+ };
+ 
+ Color accent_of(int tile) { return Color::rgb(kSpec[tile].accent); }
+@@ -1595,7 +1595,7 @@ void Dashboard::draw_settings(gfx::DrawList & list) const {
+             if (focused) {
+                 list.glow(pill, 22, 12, kCyan.with_alpha(on ? 0.45f : 0.18f));
+             }
+-            list.bordered_rect(pill, 22, on ? kCyan : Color::rgb(0x2a3550), 1.5f, on ? kCyan : kInk.with_alpha(0.3f));
++            list.bordered_rect(pill, 22, on ? kCyan : Color::rgb(0x28354a), 1.5f, on ? kCyan : kInk.with_alpha(0.3f));
+             const Rect thumb{ on ? pill.x + pill.w - 39 : pill.x + 5, pill.cy() - 17, 34, 34 };
+             list.shadow({ thumb.x, thumb.y + 2, thumb.w, thumb.h }, 17, 8, kBlack.with_alpha(0.45f));
+             list.rounded_rect(thumb, 17, on ? kPanelBottom : kInk);
+@@ -2016,9 +2016,9 @@ void Dashboard::draw_hints(DashboardFrame & frame) const {
+ 
+ void Dashboard::draw(DashboardFrame & frame) const {
+     frame.backdrop.mode = gfx::BackdropMode::dots;
+-    frame.backdrop.colors[0] = Color::rgb(0x05070f);
+-    frame.backdrop.colors[1] = Color::rgb(0x0b1122);
+-    frame.backdrop.colors[2] = gfx::mix(Color::rgb(0x2b3d66), kBrand, 0.35f);
++    frame.backdrop.colors[0] = Color::rgb(0x070c18);
++    frame.backdrop.colors[1] = Color::rgb(0x0b1430);
++    frame.backdrop.colors[2] = gfx::mix(Color::rgb(0x27457f), Color::rgb(0x34276e), 0.35f);
+     frame.backdrop.time = clock_;
+ 
+     gfx::DrawList & scene = frame.scene;

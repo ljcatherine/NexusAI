@@ -128,6 +128,56 @@ std::string json_number(double value) {
     while (fraction.size() < 3) fraction.insert(fraction.begin(), '0');
     return std::to_string(milli / 1000) + "." + fraction;
 }
+// Log files can hold cut-off multi-byte text; invalid bytes would break the JSON.
+// shortcut: checks sequence shape only (overlong forms pass), tighten if a strict client rejects a reply
+std::string valid_utf8(const std::string & in) {
+    std::string out;
+    for (size_t i = 0; i < in.size();) {
+        const unsigned char c = (unsigned char)in[i];
+        const size_t n = c < 0x80 ? 1 : (c >> 5) == 6 ? 2 : (c >> 4) == 14 ? 3 : (c >> 3) == 30 ? 4 : 0;
+        bool ok = n != 0 && i + n <= in.size();
+        for (size_t k = 1; ok && k < n; ++k) ok = ((unsigned char)in[i + k] & 0xC0) == 0x80;
+        if (ok) { out.append(in, i, n); i += n; } else { out += '?'; ++i; }
+    }
+    return out;
+}
+// One page of a log as whole lines, plus the byte cursor to ask from next time.
+// after < 0, or past the end (the log was rewritten), means the newest lines.
+// shortcut: cursor polling, not a held-open stream, since one thread serves every request; give streams their own thread first
+std::string log_page(const std::string & file, const std::string & source, long after) {
+    constexpr long chunk = 65536;
+    std::string text;
+    long from = 0;
+    bool tail = false;
+    if (FILE * f = std::fopen(file.c_str(), "rb")) {
+        std::fseek(f, 0, SEEK_END);
+        const long size = std::max(0L, std::ftell(f));
+        tail = after < 0 || after > size;
+        from = tail ? std::max(0L, size - chunk) : after;
+        std::fseek(f, from, SEEK_SET);
+        text.resize((size_t)std::min(chunk, size - from));
+        text.resize(std::fread(text.data(), 1, text.size(), f));
+        std::fclose(f);
+    }
+    size_t start = tail && from > 0 ? text.find('\n') + 1 : 0; // the first line is cut
+    size_t stop = text.rfind('\n');
+    // No newline: wait for the line to finish, unless it alone fills a page.
+    stop = stop != std::string::npos ? stop + 1 : text.size() == (size_t)chunk ? text.size() : start;
+    stop = std::max(stop, start);
+    std::string body = "{\"source\":" + json_string(source) + ",\"next\":" + std::to_string(from + (long)stop) + ",\"lines\":[";
+    bool first = true;
+    while (start < stop) {
+        size_t end = text.find('\n', start);
+        if (end == std::string::npos || end > stop) end = stop;
+        size_t last = end;
+        if (last > start && text[last - 1] == '\r') --last;
+        if (!first) body += ',';
+        first = false;
+        body += json_string(valid_utf8(text.substr(start, last - start)));
+        start = end + 1;
+    }
+    return body + "]}";
+}
 void response(int fd, int code, const std::string & body) {
     const char * reason = code == 200 ? "OK" : code == 202 ? "Accepted" : code == 400 ? "Bad Request" :
          code == 401 ? "Unauthorized" : code == 404 ? "Not Found" : code == 405 ? "Method Not Allowed" :
@@ -298,6 +348,11 @@ void NexusControl::stop() {
     listener_ = -1;
     token_hash_.fill(0);
 }
+void NexusControl::set_log_files(std::string app, std::string llama) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    app_log_ = std::move(app);
+    llama_log_ = std::move(llama);
+}
 unsigned short NexusControl::port() const { std::lock_guard<std::mutex> lock(mutex_); return port_; }
 void NexusControl::publish(const Live & live, const std::vector<ModelRow> & models) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -403,6 +458,26 @@ void NexusControl::handle(int fd) {
                 ",\"kv_cache_gib\":" + json_number(live_.kv_gib) +
                 ",\"load_progress\":" + (live_.load_progress < 0 ? "null" : json_number(live_.load_progress)) +
                 ",\"ready\":" + (ready && !switching_ && !restart_failed_ ? "true" : "false") + "}"); return;
+        }
+        if (method == "GET" && path.rfind("/v1/nexus/logs/", 0) == 0) {
+            // The caller picks a source name and a cursor, never a path.
+            const size_t prefix = std::string("/v1/nexus/logs/").size();
+            const size_t mark = path.find('?');
+            const std::string source = path.substr(prefix, mark == std::string::npos ? mark : mark - prefix);
+            long after = -1;
+            if (mark != std::string::npos) {
+                const std::string query = path.substr(mark + 1);
+                const std::string digits = query.rfind("after=", 0) == 0 ? query.substr(6) : "";
+                if (digits.empty() || digits.size() > 18 ||
+                    !std::all_of(digits.begin(), digits.end(), [](unsigned char c) { return c >= '0' && c <= '9'; })) {
+                    reply(400, "{\"error\":\"invalid cursor\"}"); return;
+                }
+                after = std::stol(digits);
+            }
+            const std::string file = source == "app" ? app_log_ : source == "llama" ? llama_log_ : "";
+            if (file.empty()) { reply(404, "{\"error\":\"unknown endpoint\"}"); return; }
+            lock.unlock(); // the file read stays off the mutex the main thread publishes under
+            response(fd, 200, log_page(file, source, after)); return;
         }
         if (path == "/v1/nexus/models" && method == "GET") {
             std::string body = "{\"models\":[";

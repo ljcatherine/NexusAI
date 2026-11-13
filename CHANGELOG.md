@@ -2,6 +2,12 @@
 
 NexusAI follows [semantic versioning](https://semver.org).
 
+## Unreleased
+
+- Dashboard in the Nexus Midnight palette.
+- Launch animation: the Orbit N draws itself, then the dashboard enters. Cross skips it.
+- Control API: `GET /v1/nexus/logs/app` and `/logs/llama`, with an `after` cursor for following a log.
+
 ## 1.0.0
 
 First standalone release, moved out of the NexusiOS repository into its own.

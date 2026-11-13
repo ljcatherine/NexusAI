@@ -24,6 +24,12 @@ git -C "$destination" apply --check "$root/patches/0005-nexus-executable-modes.p
 git -C "$destination" apply "$root/patches/0005-nexus-executable-modes.patch"
 git -C "$destination" apply --check "$root/patches/0006-nexus-provisioning-pin.patch"
 git -C "$destination" apply "$root/patches/0006-nexus-provisioning-pin.patch"
+git -C "$destination" apply --check "$root/patches/0007-nexus-midnight-palette.patch"
+git -C "$destination" apply "$root/patches/0007-nexus-midnight-palette.patch"
+git -C "$destination" apply --check "$root/patches/0008-nexus-control-logs.patch"
+git -C "$destination" apply "$root/patches/0008-nexus-control-logs.patch"
+git -C "$destination" apply --check "$root/patches/0009-nexus-launch-animation.patch"
+git -C "$destination" apply "$root/patches/0009-nexus-launch-animation.patch"
 cp -- "$root/native/nexus_control.cpp" "$root/native/nexus_control.hpp" "$root/native/nexus_control_test.cpp" "$destination/ps5/app/"
 # The upstream build scripts apply patches in the native clone's patches/
 # directory to the pinned llama.cpp submodule before compiling. Keep the
