@@ -14,6 +14,8 @@ fi
 mkdir -p -- "$(dirname "$destination")"
 git -c core.autocrlf=false clone --filter=blob:none --no-checkout "$upstream" "$destination"
 git -C "$destination" checkout --detach "$revision"
+# The original blackbearreloaded/ps5-homebrew-ui is gone; this mirror holds the pinned commit.
+git -C "$destination" submodule set-url third_party/ps5-homebrew-ui https://github.com/abhi245y/ps5-homebrew-ui
 git -C "$destination" apply --unidiff-zero --check "$root/patches/0001-nexus-control.patch"
 git -C "$destination" apply --unidiff-zero "$root/patches/0001-nexus-control.patch"
 git -C "$destination" apply --check "$root/patches/0003-nexusai-branding.patch"
