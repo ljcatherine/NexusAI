@@ -4,6 +4,7 @@ NexusAI follows [semantic versioning](https://semver.org).
 
 ## Unreleased
 
+- DeepSeek Harness: `scripts/nexusai-dsh.py` writes a DSH overlay that makes NexusAI (:8081) the model of DSH agents, with an optional live smoke test. See `docs/DSH.md`.
 - Dashboard in the Nexus Midnight palette.
 - Launch animation: the Orbit N draws itself, then the dashboard enters. Cross skips it.
 - Control API: `GET /v1/nexus/logs/app` and `/logs/llama`, with an `after` cursor for following a log.

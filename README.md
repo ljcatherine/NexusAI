@@ -92,6 +92,19 @@ Older responses without these fields are still accepted by Nexus clients.
 
 </details>
 
+## DeepSeek Harness
+
+NexusAI can be the model for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`), DeepSeek's
+agent harness with file, shell and search tools. `scripts/nexusai-dsh.py` reads the loaded model from :8081 and
+writes a DSH overlay for it:
+
+```bash
+scripts/nexusai-dsh.py --base-url http://192.168.1.50:8081/v1 --smoke
+NEXUSAI_API_KEY=nexusai-no-auth dsh --profile headless --patch ~/.dsh/nexusai.patch.yml "summarise this repo"
+```
+
+The Nexus desktop apps and NexusOnline run DSH agents on NexusAI the same way. See [docs/DSH.md](docs/DSH.md).
+
 ## Security
 
 The control API starts only when you provision it. The app's state folder is `/data/PS5LM`
@@ -116,7 +129,7 @@ sent over an untrusted network. See [SECURITY.md](SECURITY.md) to report a vulne
 |---|---|
 | [`native/nexus_control_test.cpp`](native/nexus_control_test.cpp) | Fail-closed token setup, private-file permissions, hash validation, authentication, JSON escaping, inventory, status, invalid selection, exclusive switching, log paging |
 | [`tests/`](tests) | The PS5 JSON numeric-locale fix and control-file owner repair |
-| [`scripts/`](scripts) | Benchmark, security preflight and service provenance checks, each with tests |
+| [`scripts/`](scripts) | Benchmark, security preflight, service provenance checks and the DeepSeek Harness setup, each with tests |
 | [`test_verify_title.py`](test_verify_title.py) | Offline title integrity check before a first PS5 test |
 
 The host tests compile with a standard C++20 compiler, without the PS5 SDK. A full PS5 title
