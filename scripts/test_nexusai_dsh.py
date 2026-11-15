@@ -74,6 +74,7 @@ class PatchTest(unittest.TestCase):
         self.assertIn("- id: agent-default-model", text)
         self.assertIn('    model: "/data/PS5LM/models/Example-27B-Q2_0.gguf"', text)
         self.assertNotIn(dsh.API_KEY_PLACEHOLDER, text)
+        self.assertIn("- id: session-title-llm\n  disabled: true\n", text)
 
     def test_patch_quotes_hostile_model_ids(self):
         text = dsh.patch_yaml("http://10.0.0.5:8081/v1", [

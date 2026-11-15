@@ -146,6 +146,9 @@ def patch_yaml(base_url: str, models: list[dict], default_model: str | None = No
         "  config:",
         f"    provider: {ROUTE}",
         f"    model: {_q(chosen)}",
+        "# DSH titles each session with a second model call; on a PS5 that doubles the load.",
+        "- id: session-title-llm",
+        "  disabled: true",
     ]
     return "\n".join(lines) + "\n"
 
