@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+"""Make NexusAI a model provider for DeepSeek Harness (DSH).
+
+Reads the models a NexusAI server is serving from its OpenAI-compatible
+``/v1/models`` endpoint (port 8081) and writes a DSH patch overlay that
+declares a ``nexusai`` provider route for them and makes it the default model
+of fresh DSH agents::
+
+    scripts/nexusai-dsh.py --base-url http://192.168.1.50:8081/v1
+    NEXUSAI_API_KEY=nexusai-no-auth dsh --profile headless \
+        --patch ~/.dsh/nexusai.patch.yml "summarise this repo"
+
+The overlay is applied with ``--patch`` per run, so the user's own DSH
+profiles are never edited. Nothing secret is written: :8081 has no
+authentication, and DSH's ``apiKeyEnv`` only names an environment variable
+(DSH refuses keyless hand-declared routes, so callers set a placeholder).
+
+``--smoke`` additionally runs one tool-free DSH headless task through the
+overlay and requires the reply ``OK``. The control API (:8082) is not used.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ipaddress
+import json
+import os
+from pathlib import Path, PurePosixPath
+import shutil
+import subprocess
+import sys
+import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
+
+ROUTE = "nexusai"
+API_KEY_ENV = "NEXUSAI_API_KEY"
+# Placeholder sent as the bearer; NexusAI's :8081 ignores it.
+API_KEY_PLACEHOLDER = "nexusai-no-auth"
+DEFAULT_CONTEXT = 8192
+DEFAULT_MAX_TOKENS = 8192
+DEFAULT_PATCH = Path("~/.dsh/nexusai.patch.yml")
+
+
+class SetupError(Exception):
+    pass
+
+
+def validate_base_url(url: str) -> str:
+    """Return the normalized base URL, enforcing the Nexus private-HTTP rule.
+
+    HTTPS is always allowed. Cleartext HTTP is allowed only for loopback,
+    private, link-local and Tailscale (100.64.0.0/10) addresses, matching the
+    iOS app, the gateway and the desktop apps.
+    """
+    parsed = urllib.parse.urlsplit(url.strip())
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise SetupError("base URL must start with http:// or https://")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise SetupError("base URL must not contain credentials, a query or a fragment")
+    if parsed.scheme == "http":
+        host = parsed.hostname
+        if host.lower() != "localhost":
+            try:
+                ip = ipaddress.ip_address(host)
+            except ValueError as exc:
+                raise SetupError("cleartext HTTP is only allowed for private network addresses") from exc
+            tailscale = ip.version == 4 and ip in ipaddress.ip_network("100.64.0.0/10")
+            if not (ip.is_private or ip.is_loopback or ip.is_link_local or tailscale):
+                raise SetupError("cleartext HTTP is only allowed for private network addresses")
+    path = parsed.path.rstrip("/")
+    if not path.endswith("/v1"):
+        path += "/v1"
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
+def fetch_models(base_url: str, timeout: float = 10.0) -> dict:
+    request = urllib.request.Request(base_url + "/models", headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.load(response)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise SetupError(f"could not read {base_url}/models: {exc}") from exc
+
+
+def models_from_listing(listing: dict) -> list[dict]:
+    """Turn a llama-server ``/v1/models`` reply into DSH model entries."""
+    entries = []
+    for item in listing.get("data") or []:
+        model_id = item.get("id") if isinstance(item, dict) else None
+        if not isinstance(model_id, str) or not model_id:
+            continue
+        meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+        context = meta.get("n_ctx")
+        if not isinstance(context, int) or isinstance(context, bool) or context <= 0:
+            context = DEFAULT_CONTEXT
+        name = PurePosixPath(model_id).name
+        if name.endswith(".gguf"):
+            name = name[: -len(".gguf")]
+        entries.append({
+            "id": model_id,
+            "name": name or model_id,
+            "contextWindow": context,
+            "maxTokens": min(DEFAULT_MAX_TOKENS, context),
+        })
+    if not entries:
+        raise SetupError("NexusAI reported no loaded model; load one in the NexusAI app first")
+    return entries
+
+
+def _q(value: str) -> str:
+    # JSON strings are valid YAML scalars and escape everything safely.
+    return json.dumps(value)
+
+
+def patch_yaml(base_url: str, models: list[dict], default_model: str | None = None) -> str:
+    """DSH patch overlay: a ``nexusai`` llm-pi-ai route and the default model."""
+    ids = [m["id"] for m in models]
+    chosen = default_model or ids[0]
+    if chosen not in ids:
+        raise SetupError(f"model {chosen!r} is not served by NexusAI (serving: {', '.join(ids)})")
+    lines = [
+        "# DeepSeek Harness overlay generated by NexusAI scripts/nexusai-dsh.py.",
+        "# Use with: dsh --profile <profile> --patch <this file>",
+        "- id: llm-pi-ai",
+        "  config:",
+        "    providers:",
+        f"      {ROUTE}:",
+        f"        displayName: {_q('NexusAI')}",
+        f"        apiKeyEnv: {API_KEY_ENV}",
+        "        api: openai-completions",
+        f"        baseURL: {_q(base_url)}",
+        "        models:",
+    ]
+    for m in models:
+        lines += [
+            f"          - id: {_q(m['id'])}",
+            f"            name: {_q(m['name'])}",
+            f"            contextWindow: {m['contextWindow']}",
+            f"            maxTokens: {m['maxTokens']}",
+            "            reasoningEfforts: false",
+        ]
+    lines += [
+        "- id: agent-default-model",
+        "  config:",
+        f"    provider: {ROUTE}",
+        f"    model: {_q(chosen)}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def write_private(path: Path, text: str) -> None:
+    """Write atomically with mode 0600 (the directory is created 0700)."""
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".nexusai-dsh-")
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def smoke(dsh: str, patch: Path, timeout: float) -> str:
+    """Run one tool-free headless task; return the final text or raise."""
+    env = dict(os.environ)
+    env.setdefault(API_KEY_ENV, API_KEY_PLACEHOLDER)
+    with tempfile.TemporaryDirectory(prefix="nexusai-dsh-") as workspace:
+        try:
+            result = subprocess.run(
+                [dsh, "--profile", "headless", "--patch", str(patch), "--json",
+                 "--permission-mode", "read-only", "--approval-policy", "never",
+                 "Reply with exactly: OK. Do not use any tools."],
+                cwd=workspace, env=env, capture_output=True, text=True, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise SetupError(f"DSH smoke test timed out after {timeout:.0f}s") from exc
+    final = None
+    for line in result.stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get("type") == "final":
+            final = event
+    if final is None:
+        raise SetupError(f"DSH produced no final event (exit {result.returncode}): {result.stderr.strip()[-500:]}")
+    reason = final.get("reason") or {}
+    if reason.get("kind") != "completed":
+        message = (reason.get("error") or {}).get("message") or reason
+        raise SetupError(f"DSH run failed: {message}")
+    text = str(final.get("text", "")).strip()
+    if text.rstrip(".").upper() != "OK":
+        raise SetupError(f"unexpected DSH reply: {text[:200]!r}")
+    return text
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--base-url", default=os.environ.get("NEXUSAI_BASE_URL", ""),
+                        help="NexusAI OpenAI-compatible URL, e.g. http://192.168.1.50:8081/v1 (or NEXUSAI_BASE_URL)")
+    parser.add_argument("--model", help="default model id (default: the first served model)")
+    parser.add_argument("--out", type=Path, default=DEFAULT_PATCH, help=f"overlay path (default {DEFAULT_PATCH})")
+    parser.add_argument("--print", action="store_true", help="print the overlay instead of writing it")
+    parser.add_argument("--smoke", action="store_true", help="run one DSH headless task through the overlay")
+    parser.add_argument("--dsh", default=os.environ.get("NEXUS_DSH_PATH") or shutil.which("dsh") or "dsh")
+    parser.add_argument("--timeout", type=float, default=600.0, help="smoke-test timeout in seconds")
+    args = parser.parse_args(argv)
+    try:
+        if not args.base_url:
+            raise SetupError("pass --base-url or set NEXUSAI_BASE_URL")
+        base_url = validate_base_url(args.base_url)
+        text = patch_yaml(base_url, models_from_listing(fetch_models(base_url)), args.model)
+        if args.print:
+            sys.stdout.write(text)
+            return 0
+        out = args.out.expanduser()
+        write_private(out, text)
+        print(f"Wrote {out}")
+        print(f"Run: {API_KEY_ENV}={API_KEY_PLACEHOLDER} dsh --profile headless --patch {out} \"<task>\"")
+        if args.smoke:
+            print(f"DSH smoke test passed: {smoke(args.dsh, out, args.timeout)}")
+        return 0
+    except SetupError as exc:
+        print(f"nexusai-dsh: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
