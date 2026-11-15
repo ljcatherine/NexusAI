@@ -7,6 +7,8 @@ NexusAI follows [semantic versioning](https://semver.org).
 - Dashboard in the Nexus Midnight palette.
 - Launch animation: the Orbit N draws itself, then the dashboard enters. Cross skips it.
 - Control API: `GET /v1/nexus/logs/app` and `/logs/llama`, with an `after` cursor for following a log.
+- `prepare-test-identity.py` names the title "NexusAI" and installs the Orbit N icon (`assets/nexus-icon0.png`), with the content ID the PPSA99743 test title uses. It now works on `prepare-build.sh`'s `build/nexusai` and the Docker build's `/work/nexusai`.
+- `verify-test-title.py` accepts any Nexus-named title, and reports the real `titleName` (it reported `sce_module/libc.prx`).
 
 ## 1.0.0
 

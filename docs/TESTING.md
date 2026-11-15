@@ -51,9 +51,15 @@ checklist before installing or launching that package.
 ## Stage and inspect before touching the console
 
 1. Build from the pinned `./prepare-build.sh` build tree;
-   avoid the original title ID **PPSA99581**. In the ignored test clone,
+   avoid the original title ID **PPSA99581**. In the ignored build tree,
    run `prepare-test-identity.py` with a distinct, owner-verified unused
-   nine-character `PPSA#####` title ID **before** invoking the builder.
+   nine-character `PPSA#####` title ID **before** invoking the builder,
+   for example `python3 prepare-test-identity.py build/nexusai --test-title-id PPSA99743`.
+   It names the title **NexusAI**, sets the matching concept and content IDs
+   (`UP9000-<ID>_00-NEXUSPS5LM000001`) and installs the Orbit N icon
+   (`assets/nexus-icon0.png`, 512x512, rendered from `assets/nexus-icon.svg`).
+   ShadowMountPlus copies a title's icon and name only when it registers it,
+   so changing either on an installed title needs a remove-and-reinstall.
 2. Build the PS5 title using the upstream PS5_Vulkan cross-toolchain and
    its verified SDK, RADV release archive, native-tool and OpenGL files.
    Preserve the build logs. Do not substitute any unsigned host executable

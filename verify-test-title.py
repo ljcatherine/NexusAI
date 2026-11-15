@@ -46,16 +46,18 @@ def verify(root: pathlib.Path) -> dict:
     if not isinstance(cid, str) or not cid.startswith(f"UP9000-{title_id}_00-") or len(cid) != 36:
         raise ValueError("test title contentId is inconsistent with titleId")
     name = params.get("localizedParameters", {}).get("en-US", {}).get("titleName", "")
-    if "Nexus" not in name or "Test" not in name:
-        raise ValueError("titleName must clearly identify an experimental Nexus test build")
+    # The separate title ID isolates the build from PS5LM Plus; the name only
+    # has to say it is Nexus's ("NexusAI", or "NexusAI Test" in older builds).
+    if "Nexus" not in name:
+        raise ValueError("titleName must identify a Nexus build")
     if root.name != title_id:
         raise ValueError("title directory and param.json titleId differ")
     executable = root / "eboot.bin"
     if executable.stat().st_size < 4096:
         raise ValueError("eboot.bin is too small to trust as a linked PS5 title")
-    for name in EXECUTABLE_FILES:
-        if (root / name).stat().st_mode & 0o111 != 0o111:
-            raise ValueError(f"PS5 executable lacks execute permissions: {name}")
+    for executable_name in EXECUTABLE_FILES:
+        if (root / executable_name).stat().st_mode & 0o111 != 0o111:
+            raise ValueError(f"PS5 executable lacks execute permissions: {executable_name}")
     assets = {}
     for path in sorted(root.rglob("*")):
         if path.is_symlink():

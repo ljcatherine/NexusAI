@@ -64,5 +64,14 @@ class VerifyTitleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             check.verify(self.root)
 
+    def test_title_name_must_name_nexus(self):
+        self.params['localizedParameters']['en-US']['titleName'] = 'NexusAI'
+        self.write_params()
+        self.assertEqual(check.verify(self.root)['titleName'], 'NexusAI')
+        self.params['localizedParameters']['en-US']['titleName'] = 'PS5LM Plus'
+        self.write_params()
+        with self.assertRaisesRegex(ValueError, 'Nexus build'):
+            check.verify(self.root)
+
 if __name__ == '__main__':
     unittest.main()
