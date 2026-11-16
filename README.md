@@ -64,6 +64,7 @@ non-production homebrew setup first, keep a copy of the original title, and foll
 | `GET /v1/nexus/models` | Installed models: stable ID, label, drive, `fits` and `current` flags, plus `file_size_bytes`, `architecture` and `quantization_type` where known |
 | `POST /v1/nexus/models/{16-hex-id}/load` | `202`. Queues a GPU-safe restart into that model |
 | `POST /v1/nexus/models/unload` | `202`. Queues a restart with no model |
+| `POST /v1/nexus/engine/media`, `POST /v1/nexus/engine/llm` | `202`. Queues a restart into media mode or back to the LLM engine; `/status` reports `"engine"` |
 | `GET /v1/nexus/logs/app`, `GET /v1/nexus/logs/llama` | The newest lines of the app or llama.cpp log (up to 64 KiB) as `{"source","next","lines"}` |
 | `GET /v1/nexus/logs/{app\|llama}?after=<next>` | Only the lines written since that cursor. Poll it to follow a log |
 
@@ -101,6 +102,8 @@ The control API starts only when you provision it. The app's state folder is `/d
 |---|---|
 | `nexus-control.token` | One line, `sha256:<64 lowercase hex>`, mode `0600` or stricter. It holds only the SHA-256 of a 32–128 character random token. Keep the token itself in the gateway's private config and the Nexus Keychain. Without a valid file, the controller doesn't start. |
 | `nexus-control.lan` | Optional empty marker. Binds `0.0.0.0:8082` instead of `127.0.0.1:8082`, so a gateway on another machine can reach it. |
+
+The control API accepts only loopback and Tailscale (`100.64.0.0/10`) peers, plus RFC1918 peers when `nexus-control.lan` is present; other peers are closed before any request is read.
 
 > [!IMPORTANT]
 > :8081 and :8082 speak plain HTTP. Never expose them to the internet or port-forward them. Firewall
@@ -142,6 +145,9 @@ NexusAI is a modified version of **[PS5LM Plus](https://github.com/abhi245y/PS5L
 which grew out of **[PS5LM](https://github.com/cobanov/PS5LM)** by Mert Cobanov: the llama.cpp port to
 the PS5, its payload and the native GPU app all come from that work. NexusAI adds the control API, the
 dashboard branding, model metadata and the provisioning and test tooling.
+
+The image, video, speech and voice engines are being ported from **[PSllama](https://github.com/mansanitizer/psllama)**
+by Ashar Rai Mujeeb (GPL-3.0-or-later). The derived files are listed in [NOTICE](NOTICE).
 
 Built against upstream revision `6729b4acbaf65e23b2e8bc8708b2acba524a7aa8`. Like the projects it builds
 on, NexusAI is free software under the **GNU General Public License v3.0 or later**. See [LICENSE](LICENSE).

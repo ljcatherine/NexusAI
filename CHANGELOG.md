@@ -7,6 +7,7 @@ NexusAI follows [semantic versioning](https://semver.org).
 - Dashboard in the Nexus Midnight palette.
 - Launch animation: the Orbit N draws itself, then the dashboard enters. Cross skips it.
 - Control API: `GET /v1/nexus/logs/app` and `/logs/llama`, with an `after` cursor for following a log.
+- Started porting PSllama's media engines (image, video, speech, voice); see docs/PSLLAMA-INTEGRATION-PLAN.md.
 
 ## 1.0.0
 

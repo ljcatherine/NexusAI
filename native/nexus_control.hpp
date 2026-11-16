@@ -28,8 +28,9 @@ class NexusControl {
     void set_log_files(std::string app, std::string llama);
     unsigned short port() const;
     void publish(const Live & live, const std::vector<ModelRow> & models);
-    std::optional<std::string> take_request(); // "none" to unload, model path to load
+    std::optional<std::string> take_request(); // "none" to unload, model path to load, "engine:llm"/"engine:media"
     void mark_restart_failed(); // LoadExec returned instead of replacing the process
+    void set_engine(const std::string & engine); // "llm" or "media"; reported by /status
 
     static std::string model_id(const std::string & path);
   private:
@@ -43,6 +44,8 @@ class NexusControl {
     std::optional<std::string> pending_;
     bool switching_ = false;
     bool restart_failed_ = false;
+    bool allow_lan_ = false;
+    std::string engine_ = "llm";
     std::atomic<bool> stopped_{true};
     int listener_ = -1;
     unsigned short port_ = 0;

@@ -1,0 +1,77 @@
+Derived from PSllama d079717, GPL-3.0-or-later.
+
+PS5 Vulkan memory budget for the NexusAI llama.cpp pin 620d2225. Adds
+ggml_backend_vk_get_device_memory_budget() and the GGML_VK_IGNORE_MEMORY_BUDGET
+switch that makes ggml_backend_vk_get_device_memory() report the whole heap.
+The PSllama @15186 underflow hunk is not included: upstream already has the
+min(heapBudget, heap.size) guard at this revision.
+
+diff --git a/ggml/include/ggml-vulkan.h b/ggml/include/ggml-vulkan.h
+index ed5ea5f..e4f19f7 100644
+--- a/ggml/include/ggml-vulkan.h
++++ b/ggml/include/ggml-vulkan.h
+@@ -17,6 +17,11 @@ GGML_BACKEND_API bool ggml_backend_is_vk(ggml_backend_t backend);
+ GGML_BACKEND_API int  ggml_backend_vk_get_device_count(void);
+ GGML_BACKEND_API void ggml_backend_vk_get_device_description(int device, char * description, size_t description_size);
+ GGML_BACKEND_API void ggml_backend_vk_get_device_memory(int device, size_t * free, size_t * total);
++// Returns Vulkan memory-budget extension values when available. `heap_size`
++// is physical heap size; `budget` and `usage` are the OS-recommended budget
++// and current heap usage, respectively. Returns false when unsupported.
++GGML_BACKEND_API bool ggml_backend_vk_get_device_memory_budget(
++    int device, size_t * budget, size_t * usage, size_t * heap_size);
+ 
+ GGML_BACKEND_API ggml_backend_buffer_type_t ggml_backend_vk_buffer_type(size_t dev_num);
+ // pinned host buffer for use with the CPU backend for faster copies between CPU and GPU
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 436bfe3..076d6fd 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -15277,7 +15277,12 @@ void ggml_backend_vk_get_device_memory(int device, size_t * free, size_t * total
+     vk::PhysicalDevice vkdev = vk_instance.instance.enumeratePhysicalDevices()[vk_instance.device_indices[device]];
+     vk::PhysicalDeviceMemoryBudgetPropertiesEXT budgetprops;
+     vk::PhysicalDeviceMemoryProperties2 memprops = {};
+-    const bool membudget_supported = vk_instance.device_supports_membudget[device];
++    // PS5: the RADV budget and usage numbers there only grow (across title
++    // restarts too), so free memory derived from them is wrong. With
++    // GGML_VK_IGNORE_MEMORY_BUDGET the whole heap is reported and callers rely
++    // on their own accounting (stable-diffusion.cpp tracks what it loads).
++    static const bool ignore_budget = getenv("GGML_VK_IGNORE_MEMORY_BUDGET") != nullptr;
++    const bool membudget_supported = vk_instance.device_supports_membudget[device] && !ignore_budget;
+     const bool is_integrated_gpu = vkdev.getProperties().deviceType == vk::PhysicalDeviceType::eIntegratedGpu;
+ 
+     if (membudget_supported) {
+@@ -15306,6 +15311,34 @@ void ggml_backend_vk_get_device_memory(int device, size_t * free, size_t * total
+     }
+ }
+ 
++bool ggml_backend_vk_get_device_memory_budget(
++        int device, size_t * budget, size_t * usage, size_t * heap_size) {
++    GGML_ASSERT(device >= 0 && device < (int) vk_instance.device_indices.size());
++    GGML_ASSERT(device < (int) vk_instance.device_supports_membudget.size());
++
++    vk::PhysicalDevice vkdev = vk_instance.instance.enumeratePhysicalDevices()[vk_instance.device_indices[device]];
++    vk::PhysicalDeviceMemoryBudgetPropertiesEXT budgetprops;
++    vk::PhysicalDeviceMemoryProperties2 memprops = {};
++    const bool supported = vk_instance.device_supports_membudget[device];
++    const bool is_integrated_gpu = vkdev.getProperties().deviceType == vk::PhysicalDeviceType::eIntegratedGpu;
++    if (supported) memprops.pNext = &budgetprops;
++    vkdev.getMemoryProperties2(&memprops);
++
++    *budget = 0;
++    *usage = 0;
++    *heap_size = 0;
++    for (uint32_t i = 0; i < memprops.memoryProperties.memoryHeapCount; ++i) {
++        const vk::MemoryHeap & heap = memprops.memoryProperties.memoryHeaps[i];
++        if (!is_integrated_gpu && !(heap.flags & vk::MemoryHeapFlagBits::eDeviceLocal)) continue;
++        *heap_size += heap.size;
++        if (supported && i < budgetprops.heapUsage.size()) {
++            *budget += budgetprops.heapBudget[i];
++            *usage += budgetprops.heapUsage[i];
++        }
++    }
++    return supported;
++}
++
+ static vk::PhysicalDeviceType ggml_backend_vk_get_device_type(int device_idx) {
+     GGML_ASSERT(device_idx >= 0 && device_idx < (int) vk_instance.device_indices.size());
+ 

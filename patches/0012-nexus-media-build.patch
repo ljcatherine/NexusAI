@@ -1,0 +1,96 @@
+diff --git a/scripts/build-app.sh b/scripts/build-app.sh
+index 084cf16..629a7c0 100755
+--- a/scripts/build-app.sh
++++ b/scripts/build-app.sh
+@@ -76,7 +76,22 @@ cmake -S "$llama" -B "$out/llama" -G Ninja \
+     -DLLAMA_OPENSSL=OFF -DLLAMA_BUILD_COMMON=ON -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+     -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_SERVER=ON > "$out.configure.log" 2>&1 ||
+     { tail -30 "$out.configure.log" >&2; exit 1; }
+-cmake --build "$out/llama" --target llama-server-impl
++# mtmd (voice audio input) and llama-common (chat templates) are used by the media engines.
++cmake --build "$out/llama" --target llama-server-impl mtmd llama-common
++
++# stable-diffusion.cpp, through the shim that native/sd/CMakeLists.txt is copied to. It links
++# the ggml built above, so it takes the same toolchain and flags as the llama build.
++sd_src="$root/third_party/stable-diffusion.cpp"
++sd_out="$out/sd"
++cmake -S "$root/third_party/sd-ps5" -B "$sd_out" -G Ninja \
++    -DCMAKE_TOOLCHAIN_FILE="$root/ps5/app/toolchain.cmake" \
++    -DCMAKE_BUILD_TYPE=Release \
++    -DCMAKE_C_FLAGS="$flags" -DCMAKE_CXX_FLAGS="$cxxflags" \
++    -DBUILD_SHARED_LIBS=OFF -DGGML_BUILD="$out/llama/ggml/src" > "$out.sd-configure.log" 2>&1 ||
++    { tail -30 "$out.sd-configure.log" >&2; exit 1; }
++cmake --build "$sd_out" --target stable-diffusion
++sd_lib="$sd_out/sdcpp/libstable-diffusion.a"
++[ -f "$sd_lib" ] || { echo "build-app: missing $sd_lib" >&2; exit 2; }
+ 
+ # The app's own objects, and the title's start code from PS5_Vulkan.
+ obj="$out/obj"
+@@ -96,6 +111,24 @@ if [[ -n "${NEXUS_PS5_CONTROL_PIN_HEADER:-}" ]]; then
+     nexus_control_pin_flags=(-DNEXUS_CONTROL_REQUIRE_PROVISIONING_PIN=1 -include "$NEXUS_PS5_CONTROL_PIN_HEADER")
+ fi
+ cxx -std=c++20 -fexceptions -fcxx-exceptions -I "$llama/vendor" "${nexus_control_pin_flags[@]}" -c "$root/ps5/app/nexus_control.cpp" -o "$obj/nexus_control.o"
++# whisper.cpp (STT) against the same ggml. whisper.cpp always references its ANEForge encoder,
++# so that file is built and linked too (PSllama build-gguf-vk-title.sh:59-65).
++whisper="$root/third_party/whisper.cpp"
++cxx -DWHISPER_VERSION='"whispercpp"' -fexceptions -I "$whisper/include" -I "$whisper/src" -I "$llama/ggml/include" \
++    -c "$whisper/src/whisper.cpp" -o "$obj/whisper.o"
++cxx -fexceptions -I "$whisper/include" -I "$whisper/src" -I "$llama/ggml/include" \
++    -c "$whisper/src/aneforge/whisper-aneforge.cpp" -o "$obj/whisper-aneforge.o"
++# The media engines: the control's flags, plus the headers of sd.cpp, whisper.cpp, mtmd and common.
++# The *_test.cpp files and nexus_media_fakes.cpp are not app sources and are never listed here.
++media_flags=(-std=c++20 -fexceptions -fcxx-exceptions -I "$llama/vendor" "${nexus_control_pin_flags[@]}"
++    -I "$sd_src/include" -I "$sd_src/thirdparty" -I "$whisper/include" -I "$llama/include" -I "$llama/ggml/include"
++    -I "$llama/tools/mtmd" -I "$llama/common")
++media_objects=()
++for name in nexus_wav nexus_media_path nexus_sd_service nexus_audio_service nexus_media_http \
++    nexus_media_gpu nexus_media_image nexus_media_audio nexus_media_voice; do
++    cxx "${media_flags[@]}" -c "$root/ps5/app/$name.cpp" -o "$obj/$name.o"
++    media_objects+=("$obj/$name.o")
++done
+ cxx -fexceptions -fcxx-exceptions -c "$root/ps5/app/model_plan.cpp" -o "$obj/model_plan.o"
+ cxx -std=c++20 -fexceptions -fcxx-exceptions -I "$llama/vendor" -c "$root/ps5/app/settings.cpp" -o "$obj/settings.o"
+ cxx -std=c++20 -fexceptions -fcxx-exceptions -c "$root/ps5/app/fetch.cpp" -o "$obj/fetch.o"
+@@ -186,15 +219,34 @@ for f in "${radv_link_flags[@]}"; do
+     case $f in --defsym=getaddrinfo=*|--defsym=freeaddrinfo=*) ;; *) flags+=("$f") ;; esac
+ done
+ radv_link_flags=("${flags[@]}" --wrap=sceAgcInit)
++# All of llama.cpp's archives (ggml, llama, common, mtmd, vendor hash) are in the group, so their order does not matter.
+ mapfile -t libs < <(find "$out/llama" -name '*.a' | sort)
+-"$sdk/bin/prospero-lld" "${radv_linker_script[@]}" --eh-frame-hdr "${radv_link_flags[@]}" \
+-    --version-script "$vk/tooling/native/app-symbols.map" --exclude-libs=ALL \
+-    -e _start -o "$out/llvm-pie.elf" \
+-    "$obj/app_crt.o" "$obj/app_cpp_runtime.o" "$obj/main.o" "$obj/nexus_control.o" "$obj/display.o" "$obj/model_plan.o" "$obj/settings.o" "$obj/fetch.o" "$obj/market.o" "$obj/sha256.o" "$obj/dashboard.o" "$obj/stats.o" \
+-    --start-group "${libs[@]}" "$obj/libps5lm_kit.a" "$obj/libps5app_compat.a" "$out/gl/libps5lm_gl.a" --end-group \
+-    "$out/stubs/libSceAgc.so" "$out/stubs/libSceAgcDriver.so" \
+-    "${radv_link_inputs[@]}" \
+-    --as-needed "$sdk"/target/lib/*.so
++link_title() {
++    "$sdk/bin/prospero-lld" "${radv_linker_script[@]}" --eh-frame-hdr "${radv_link_flags[@]}" "$@" \
++        --version-script "$vk/tooling/native/app-symbols.map" --exclude-libs=ALL \
++        -e _start -o "$out/llvm-pie.elf" \
++        "$obj/app_crt.o" "$obj/app_cpp_runtime.o" "$obj/main.o" "$obj/nexus_control.o" "$obj/display.o" "$obj/model_plan.o" "$obj/settings.o" "$obj/fetch.o" "$obj/market.o" "$obj/sha256.o" "$obj/dashboard.o" "$obj/stats.o" \
++        "$obj/whisper.o" "$obj/whisper-aneforge.o" "${media_objects[@]}" \
++        --start-group "${libs[@]}" "$sd_lib" "$obj/libps5lm_kit.a" "$obj/libps5app_compat.a" "$out/gl/libps5lm_gl.a" --end-group \
++        "$out/stubs/libSceAgc.so" "$out/stubs/libSceAgcDriver.so" \
++        "${radv_link_inputs[@]}" \
++        --as-needed "$sdk"/target/lib/*.so
++}
++link_title
++# _ZTH*: C++ thread_local init hooks, weak by ABI. stable-diffusion.cpp's thread_local variables
++# leave them undefined (PSllama build-gguf-vk-title.sh:104-123 binds the same set to NULL), so
++# link again only when the first link leaves weak dynamic imports behind.
++mesa_prefixes='^((radv|vk_cmd|vk_common|wsi|ctx_roll|rmv|rra|utrace|sqtt|annotate|threaded)_|_ZTH)'
++"$sdk/bin/llvm-nm" -D --undefined-only "$out/llvm-pie.elf" | awk '$(NF-1) ~ /^[wW]$/ {print $NF}' | sort -u > "$out/weak-unresolved.txt"
++if [[ -s "$out/weak-unresolved.txt" ]]; then
++    if grep -vE "$mesa_prefixes" "$out/weak-unresolved.txt" | grep -q .; then
++        echo "build-app: unexpected unresolved weak symbols:" >&2
++        grep -vE "$mesa_prefixes" "$out/weak-unresolved.txt" | head >&2
++        exit 1
++    fi
++    sed 's/.*/--defsym=&=0/' "$out/weak-unresolved.txt" > "$out/weak-null.rsp"
++    link_title "@$out/weak-null.rsp"
++fi
+ "$tool" link --in "$out/llvm-pie.elf" --out "$out/eboot.elf" \
+     --stub-dir "$sdk/target/lib" --stub "$out/stubs/libSceAgc.so" \
+     --stub "$out/stubs/libSceAgcDriver.so" --module-sdk 0x02000009 \

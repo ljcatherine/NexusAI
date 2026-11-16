@@ -1,0 +1,32 @@
+NexusAI
+Copyright (C) the NexusAI contributors
+
+NexusAI is free software, licensed under the GNU General Public License
+version 3 or later (GPL-3.0-or-later). See LICENSE.
+
+This product includes code derived from PSllama:
+
+  Project:    PSllama, https://github.com/mansanitizer/psllama
+  Author:     Ashar Rai Mujeeb
+  Licence:    GPL-3.0-or-later
+  Revision:   d079717184d8153793789f13ed157c1c70390ba0
+
+The following NexusAI files are derived from PSllama (planned; each is
+listed when its port lands):
+
+  native/nexus_wav.hpp
+  native/nexus_wav.cpp
+  native/sd/CMakeLists.txt
+  native/nexus_sd_service.hpp
+  native/nexus_sd_service.cpp
+  native/nexus_audio_service.hpp
+  native/nexus_audio_service.cpp
+  native/nexus_media*.cpp, native/nexus_media*.hpp
+  patches/llama.cpp/01xx-*.patch
+
+PSllama itself builds on the following third-party projects, which are
+used under their own licences (MIT):
+
+  llama.cpp            https://github.com/ggml-org/llama.cpp
+  stable-diffusion.cpp https://github.com/leejet/stable-diffusion.cpp
+  whisper.cpp          https://github.com/ggml-org/whisper.cpp

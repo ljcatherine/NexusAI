@@ -67,6 +67,12 @@ bash /repo/prepare-build.sh "$T"
 git -C "$T" submodule update --init --depth 1 third_party/llama.cpp
 git -C "$T" submodule update --init third_party/ps5-homebrew-ui
 [[ "$(git -C "$T/third_party/ps5-homebrew-ui" rev-parse HEAD)" == bf44d80384d5b8f8f4f213cf98d748887211328d ]]
+# sd.cpp and whisper.cpp are plain clones (not submodules); their pins live in prepare-build.sh.
+sdcpp_pin=$(sed -n "s/^sdcpp_revision='\([0-9a-f]\{40\}\)'\$/\1/p" /repo/prepare-build.sh)
+whisper_pin=$(sed -n "s/^whisper_revision='\([0-9a-f]\{40\}\)'\$/\1/p" /repo/prepare-build.sh)
+[[ -n "$sdcpp_pin" && -n "$whisper_pin" ]] || { echo "cannot read sdcpp_revision/whisper_revision from /repo/prepare-build.sh" >&2; exit 1; }
+[[ "$(git -C "$T/third_party/stable-diffusion.cpp" rev-parse HEAD)" == "$sdcpp_pin" ]]
+[[ "$(git -C "$T/third_party/whisper.cpp" rev-parse HEAD)" == "$whisper_pin" ]]
 [[ -z "${TEST_TITLE_ID:-}" ]] || python3 /repo/prepare-test-identity.py "$T" --test-title-id "$TEST_TITLE_ID"
 if [[ -f /pin.h ]]; then  # build-app.sh requires an owner-only header owned by the builder
     install -m 600 /pin.h /tmp/nexus-pin.h

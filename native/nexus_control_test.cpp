@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "nexus_control.hpp"
 #include "model_plan.hpp"
+#include "nexus_peer.hpp"
 extern "C" {
 #include "hash/sha256/sha256.h"
 }
@@ -124,8 +125,42 @@ static void test_gguf_metadata() {
 #endif
 }
 
+// Host-order IPv4 address from dotted text, for peer_allowed_ipv4.
+static uint32_t host_ip(const char * text) {
+    in_addr address{};
+    assert(inet_pton(AF_INET, text, &address) == 1);
+    return ntohl(address.s_addr);
+}
+
+// Same boundary list as nexus_media_test.cpp's test_peer_filter.
+static void test_peer_filter() {
+    assert(ps5lm::peer_allowed_ipv4(host_ip("127.0.0.1"), false));
+    assert(ps5lm::peer_allowed_ipv4(host_ip("127.255.255.255"), false));
+    assert(!ps5lm::peer_allowed_ipv4(host_ip("100.63.255.255"), false));
+    assert(!ps5lm::peer_allowed_ipv4(host_ip("100.63.255.255"), true));
+    assert(ps5lm::peer_allowed_ipv4(host_ip("100.64.0.0"), false));
+    assert(ps5lm::peer_allowed_ipv4(host_ip("100.127.255.255"), false));
+    assert(!ps5lm::peer_allowed_ipv4(host_ip("100.128.0.0"), false));
+    assert(!ps5lm::peer_allowed_ipv4(host_ip("100.128.0.0"), true));
+    assert(!ps5lm::peer_allowed_ipv4(host_ip("10.0.0.1"), false));
+    assert(ps5lm::peer_allowed_ipv4(host_ip("10.0.0.1"), true));
+    assert(!ps5lm::peer_allowed_ipv4(host_ip("172.15.255.255"), false));
+    assert(!ps5lm::peer_allowed_ipv4(host_ip("172.15.255.255"), true));
+    assert(!ps5lm::peer_allowed_ipv4(host_ip("172.16.0.0"), false));
+    assert(ps5lm::peer_allowed_ipv4(host_ip("172.16.0.0"), true));
+    assert(!ps5lm::peer_allowed_ipv4(host_ip("172.31.255.255"), false));
+    assert(ps5lm::peer_allowed_ipv4(host_ip("172.31.255.255"), true));
+    assert(!ps5lm::peer_allowed_ipv4(host_ip("172.32.0.0"), false));
+    assert(!ps5lm::peer_allowed_ipv4(host_ip("172.32.0.0"), true));
+    assert(!ps5lm::peer_allowed_ipv4(host_ip("192.168.1.1"), false));
+    assert(ps5lm::peer_allowed_ipv4(host_ip("192.168.1.1"), true));
+    assert(!ps5lm::peer_allowed_ipv4(host_ip("8.8.8.8"), false));
+    assert(!ps5lm::peer_allowed_ipv4(host_ip("8.8.8.8"), true));
+}
+
 int main() {
     test_gguf_metadata();
+    test_peer_filter();
     const std::string token = "ABCDEF0123456789ABCDEF0123456789";
     unsigned char digest[32];
     sha256_hash(digest, reinterpret_cast<const unsigned char *>(token.data()), token.size());
@@ -369,6 +404,25 @@ int main() {
     api.mark_restart_failed();
     assert(query(port, "GET", "/v1/nexus/status", token).find("\"state\":\"restart_failed\"") != std::string::npos);
     assert(query(port, "POST", "/v1/nexus/models/"+id+"/load", token).find("202 Accepted") != std::string::npos);
+    const auto reloaded = api.take_request();
+    assert(reloaded && *reloaded == other.file);
+    api.mark_restart_failed(); // clears the switch a restart would have consumed
+    // Engine mode: same 202/409/401/404 rules as model load (GET falls through to 404 there too).
+    assert(query(port, "POST", "/v1/nexus/engine/media", "").find("401 Unauthorized") != std::string::npos);
+    assert(query(port, "GET", "/v1/nexus/engine/media", token).find("404 Not Found") != std::string::npos);
+    assert(query(port, "POST", "/v1/nexus/engine/media", token).find("202 Accepted") != std::string::npos);
+    assert(query(port, "POST", "/v1/nexus/engine/llm", token).find("409 Conflict") != std::string::npos);
+    const auto media_engine = api.take_request();
+    assert(media_engine && *media_engine == "engine:media");
+    assert(!api.take_request());
+    api.mark_restart_failed();
+    assert(query(port, "POST", "/v1/nexus/engine/llm", token).find("202 Accepted") != std::string::npos);
+    const auto llm_engine = api.take_request();
+    assert(llm_engine && *llm_engine == "engine:llm");
+    assert(query(port, "GET", "/v1/nexus/status", token).find("\"engine\":\"llm\"") != std::string::npos);
+    api.set_engine("media");
+    assert(query(port, "GET", "/v1/nexus/status", token).find("\"engine\":\"media\"") != std::string::npos);
+    api.set_engine("llm");
     api.stop();
     unlink(filename.c_str());
     assert(rmdir(directory) == 0);

@@ -2,6 +2,7 @@
 // No shell, file tool, model download or path-based load endpoint is exposed.
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "nexus_control.hpp"
+#include "nexus_peer.hpp"
 extern "C" {
 #include "hash/sha256/sha256.h"
 }
@@ -336,6 +337,7 @@ bool NexusControl::start(const std::string & token_file, bool allow_lan, unsigne
         switching_ = false;
         restart_failed_ = false;
         pending_.reset();
+        allow_lan_ = allow_lan;
     }
     thread_ = std::thread(&NexusControl::serve, this);
     return true;
@@ -371,6 +373,10 @@ void NexusControl::mark_restart_failed() {
     restart_failed_ = true;
     pending_.reset();
 }
+void NexusControl::set_engine(const std::string & engine) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    engine_ = engine == "media" ? "media" : "llm";
+}
 void NexusControl::serve() {
     while (!stopped_) {
         fd_set set; FD_ZERO(&set);
@@ -380,8 +386,14 @@ void NexusControl::serve() {
         FD_SET(fd, &set);
         timeval timeout{}; timeout.tv_usec = 250000;
         if (select(fd+1, &set, nullptr, nullptr, &timeout) <= 0 || stopped_) continue;
-        const int client = accept(fd, nullptr, nullptr);
+        sockaddr_in peer{};
+        socklen_t peer_length = sizeof(peer);
+        const int client = accept(fd, reinterpret_cast<sockaddr *>(&peer), &peer_length);
         if (client < 0) continue;
+        bool allow_lan;
+        { std::lock_guard<std::mutex> lock(mutex_); allow_lan = allow_lan_; }
+        // Refused peers are closed before any byte is read, as the media listener does.
+        if (!peer_allowed_ipv4(ntohl(peer.sin_addr.s_addr), allow_lan)) { close(client); continue; }
         timeval io{}; io.tv_sec = 2;
         setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &io, sizeof(io));
         setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &io, sizeof(io));
@@ -457,6 +469,7 @@ void NexusControl::handle(int fd) {
                 ",\"model_gib\":" + json_number(live_.model_gib) +
                 ",\"kv_cache_gib\":" + json_number(live_.kv_gib) +
                 ",\"load_progress\":" + (live_.load_progress < 0 ? "null" : json_number(live_.load_progress)) +
+                ",\"engine\":" + json_string(engine_) +
                 ",\"ready\":" + (ready && !switching_ && !restart_failed_ ? "true" : "false") + "}"); return;
         }
         if (method == "GET" && path.rfind("/v1/nexus/logs/", 0) == 0) {
@@ -523,6 +536,17 @@ void NexusControl::handle(int fd) {
                 }
             }
             pending_ = chosen;
+            switching_ = true;
+            restart_failed_ = false;
+            reply(202, "{\"status\":\"switching\",\"restart_required\":true}"); return;
+        }
+        if (method == "POST" && (path == "/v1/nexus/engine/media" || path == "/v1/nexus/engine/llm")) {
+            // Same refusal rules as the model load above.
+            if (switching_ || pending_) { reply(409, "{\"error\":\"model switch already pending\"}"); return; }
+            if (live_.state == ServerState::generating) {
+                reply(409, "{\"error\":\"inference is active\"}"); return;
+            }
+            pending_ = path == "/v1/nexus/engine/media" ? "engine:media" : "engine:llm";
             switching_ = true;
             restart_failed_ = false;
             reply(202, "{\"status\":\"switching\",\"restart_required\":true}"); return;
